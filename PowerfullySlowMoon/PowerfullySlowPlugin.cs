@@ -1,23 +1,26 @@
 ﻿using BepInEx;
 using BepInEx.Configuration;
+using EntityStates;
+using EntityStates.BrotherMonster;
+using HG;
 using RoR2;
-using UnityEngine;
-using UnityEngine.Networking;
+using RoR2.CharacterSpeech;
+using RoR2.Networking;
+using RoR2.Projectile;
+using System;
 using System.Collections.Generic;
 using System.Security;
 using System.Security.Permissions;
-using System;
+using UnityEngine;
 using UnityEngine.AddressableAssets;
-using EntityStates;
-using RoR2.CharacterSpeech;
-using RoR2.Networking;
+using UnityEngine.Networking;
 
 [module: UnverifiableCode]
 [assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
 
 namespace PowerfullySlow
 {
-    [BepInPlugin("xyz.yekoc.PowerfullySlow", "Powerfully Slow Moon", "1.4.1")]
+    [BepInPlugin("xyz.yekoc.PowerfullySlow", "Powerfully Slow Moon", "1.4.2")]
     [BepInIncompatibility("com.xoxfaby.UnlockAll")]
     [BepInDependency("com.KingEnderBrine.InLobbyConfig", BepInDependency.DependencyFlags.SoftDependency)]
     public class PowerfullySlowPlugin : BaseUnityPlugin
@@ -58,6 +61,81 @@ namespace PowerfullySlow
 
             //Remove TC280s
             On.RoR2.EscapeSequenceController.OnEnable += RemoveMegaDrones;
+
+            //Fix Karma nullrefs
+            On.EntityStates.BrotherMonster.EnterSkyLeap.AttemptFireSkyLeapBombsAuthority += EnterSkyLeap_AttemptFireSkyLeapBombsAuthority;
+        }
+
+        private void EnterSkyLeap_AttemptFireSkyLeapBombsAuthority(On.EntityStates.BrotherMonster.EnterSkyLeap.orig_AttemptFireSkyLeapBombsAuthority orig, EntityStates.BrotherMonster.EnterSkyLeap self)
+        {
+            if (!IsMoon1())
+            {
+                orig(self);
+                return;
+            }
+
+            if (KarmaManager.instance.GetEffectiveKarma() >= EnterSkyLeap.requiredKarmaForSkyLeapBombs)
+            {
+                FireProjectileInfo fireProjectileInfo = new FireProjectileInfo
+                {
+                    procChainMask = default(ProcChainMask),
+                    projectilePrefab = EnterSkyLeap.skyLeapBombPrefab,
+                    damage = self.characterBody.damage,
+                    damageTypeOverride = new DamageTypeCombo?(new DamageTypeCombo
+                    {
+                        damageType = DamageType.CrippleOnHit
+                    }),
+                    crit = self.characterBody.RollCrit(),
+                    owner = self.characterBody.gameObject,
+                    rotation = Quaternion.identity,
+                    useFuseOverride = true
+                };
+                int num = BrotherKarmaUtils.ArenaCardinalPositions.Length;
+                for (int i = 0; i < num; i++)
+                {
+                    string safe = ArrayUtils.GetSafe<string>(BrotherKarmaUtils.ArenaCardinalPositions, i);
+                    Transform transform = self.GetModelChildLocator().FindChild(safe);
+                    if (transform)
+                    {
+                        if (SceneInfo.instance)
+                        {
+                            ChildLocator sceneChildLocator = SceneInfo.instance.GetComponent<ChildLocator>();
+                            Transform arenaCenter = null;
+                            if (sceneChildLocator)
+                            {
+                                arenaCenter = sceneChildLocator.FindChild("ArenaCenter");
+                            }
+
+                            if (arenaCenter)
+                            {
+                                Vector3 firePos = arenaCenter.transform.position;
+                                switch (safe)
+                                {
+                                    case "Arena+Z":
+                                        firePos += new Vector3(0f, 0f, 95f);
+                                        break;
+                                    case "Arena-Z":
+                                        firePos -= new Vector3(0f, 0f, 95f);
+                                        break;
+                                    case "Arena+X":
+                                        firePos += new Vector3(95f, 0f, 0f);
+                                        break;
+                                    case "Arena-X":
+                                        firePos -= new Vector3(95f, 0f, 0f);
+                                        break;
+                                    default:
+                                        break;
+                                }
+
+                                FireProjectileInfo fireProjectileInfo2 = fireProjectileInfo;
+                                fireProjectileInfo2.position = firePos + EnterSkyLeap.skyLeapBombHeightOffset * Vector3.up;
+                                fireProjectileInfo2.fuseOverride = self.duration + HoldSkyLeap.duration + EnterSkyLeap.extraFusePerSkyLeapBomb * (float)(i + 1);
+                                ProjectileManager.instance.FireProjectile(fireProjectileInfo2);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         private void RemoveMegaDrones(On.RoR2.EscapeSequenceController.orig_OnEnable orig, EscapeSequenceController self)
